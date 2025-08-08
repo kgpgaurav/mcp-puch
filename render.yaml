@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: mcp-starter
+    runtime: python
+    plan: free
+    buildCommand: uv pip install -e .
+    startCommand: python mcp-bearer-token/mcp_starter.py
+    envVars:
+      - key: AUTH_TOKEN
+        value: yaartadhoschale
+      - key: MY_NUMBER
+        value: "916200762166"
+      - key: PORT
+        value: "8086"
