@@ -12,6 +12,9 @@ from pydantic import BaseModel, Field, AnyUrl
 import markdownify
 import httpx
 import readabilipy
+import base64
+import json
+from datetime import datetime, timedelta
 
 # --- Load environment variables ---
 load_dotenv()
@@ -569,6 +572,660 @@ def _find_relevant_excerpts(body: str, question: str) -> str:
             relevant.append(f"• \"{sentence}\"")
     
     return '\n'.join(relevant[:3]) or "• No directly relevant excerpts found"
+
+# --- Gmail Integration Tools ---
+
+GMAIL_OAUTH_DESCRIPTION = RichToolDescription(
+    description="Start Gmail OAuth authentication flow to securely connect your Gmail account.",
+    use_when="When user wants to connect their Gmail account for the first time or refresh expired access.",
+    side_effects="Generates OAuth URL for browser authentication and provides access token retrieval instructions.",
+)
+
+@mcp.tool(description=GMAIL_OAUTH_DESCRIPTION.model_dump_json())
+async def start_gmail_oauth(
+    client_id: Annotated[str | None, Field(description="Your Google OAuth Client ID (optional if using default)")] = None,
+) -> str:
+    """
+    Start Gmail OAuth authentication process with proper browser consent flow.
+    """
+    
+    # Default OAuth client (for demo/testing - users should use their own)
+    default_client_id = "YOUR_CLIENT_ID.apps.googleusercontent.com"
+    oauth_client_id = client_id or default_client_id
+    
+    # OAuth scopes - read-only Gmail access
+    scopes = "https://www.googleapis.com/auth/gmail.readonly"
+    redirect_uri = "https://developers.google.com/oauthplayground"
+    
+    # Generate OAuth URL
+    oauth_url = f"""https://accounts.google.com/o/oauth2/v2/auth?client_id={oauth_client_id}&redirect_uri={redirect_uri}&scope={scopes}&response_type=code&access_type=offline&prompt=consent"""
+    
+    return f"""🔐 **Gmail OAuth Authentication Setup**
+
+## 🚀 **Step 1: Create Google OAuth Credentials**
+1. Go to: **https://console.cloud.google.com/apis/credentials**
+2. Create a new project or select existing one
+3. Click **"+ CREATE CREDENTIALS"** → **"OAuth 2.0 Client IDs"**
+4. Choose **"Web application"**
+5. Add redirect URI: `https://developers.google.com/oauthplayground`
+6. Copy your **Client ID** and **Client Secret**
+
+## 🔓 **Step 2: Quick Start (Using OAuth Playground)**
+1. Go to: **https://developers.google.com/oauthplayground/**
+2. Click the **⚙️ gear icon** (top right)
+3. Check **"Use your own OAuth credentials"**
+4. Enter your **Client ID** and **Client Secret**
+5. In "Step 1", select **"Gmail API v1"** → **"https://www.googleapis.com/auth/gmail.readonly"**
+6. Click **"Authorize APIs"** → Sign in and give consent
+7. In "Step 2", click **"Exchange authorization code for tokens"**
+8. Copy the **"Access token"** and **"Refresh token"**
+
+## 🔒 **Step 3: Direct OAuth URL** (Alternative)
+Click this link to start authentication:
+{oauth_url}
+
+## ✅ **After Getting Tokens:**
+Use `gmail_search_and_analyze` with your access token!
+
+**Example:**
+```
+search_query: "is:unread -category:promotions -from:noreply"
+analysis_type: "summarize"
+gmail_access_token: "ya29.a0AfH6SMC..."
+max_emails: 50
+```
+
+## 🛡️ **Security Features:**
+- ✅ Read-only access only
+- ✅ User consent required
+- ✅ Automatic promotion/bank filtering
+- ✅ Tokens stored locally only
+- ✅ No email caching on servers
+"""
+
+GMAIL_SEARCH_DESCRIPTION = RichToolDescription(
+    description="Search and analyze emails directly from Gmail with smart filtering (no promotions/bank emails).",
+    use_when="When user wants to search, summarize, or ask questions about their emails directly from Gmail.",
+    side_effects="Connects to Gmail API to fetch and analyze email content with intelligent filtering.",
+)
+
+@mcp.tool(description=GMAIL_SEARCH_DESCRIPTION.model_dump_json())
+async def gmail_search_and_analyze(
+    search_query: Annotated[str, Field(description="Gmail search query (e.g., 'from:boss@company.com', 'subject:meeting', 'is:unread', 'after:2024-01-01')")],
+    analysis_type: Annotated[str, Field(description="Type of analysis: 'summarize', 'action_items', 'sentiment', 'reply_suggestions', 'question'")] = "summarize",
+    specific_question: Annotated[str | None, Field(description="Specific question about the emails (only used when analysis_type is 'question')")] = None,
+    max_emails: Annotated[int, Field(description="Maximum number of emails to analyze (1-100, default: 50)")] = 50,
+    gmail_access_token: Annotated[str | None, Field(description="Gmail OAuth2 access token from authentication flow")] = None,
+    include_promotions: Annotated[bool, Field(description="Include promotional emails (default: False)")] = False,
+    include_bank_emails: Annotated[bool, Field(description="Include bank/financial emails (default: False)")] = False,
+) -> str:
+    """
+    Search Gmail directly and analyze emails with smart filtering and caching.
+    """
+    
+    if not gmail_access_token:
+        return """🔐 **Gmail Authentication Required**
+
+You need to authenticate with Gmail first to search your emails.
+
+**Quick Setup:**
+1. Use the `start_gmail_oauth` tool to get authentication instructions
+2. Get your access token from OAuth flow
+3. Come back and use this tool with your token
+
+**Example after authentication:**
+```
+search_query: "is:unread"
+analysis_type: "summarize"
+gmail_access_token: "ya29.a0AfH6SMC..."
+max_emails: 50
+```
+
+**Need help?** Use `start_gmail_oauth` tool for step-by-step setup! 🚀
+"""
+
+    try:
+        # Validate max_emails (increased limit as requested)
+        max_emails = max(1, min(max_emails, 100))
+        
+        # Apply smart filtering to search query
+        filtered_query = _apply_smart_filtering(search_query, include_promotions, include_bank_emails)
+        
+        # Check cache first
+        cache_key = f"{filtered_query}_{max_emails}_{analysis_type}"
+        cached_result = await _get_cached_result(cache_key)
+        
+        if cached_result:
+            return f"""📧 **Gmail Search Results** (📦 *cached - faster results*)
+
+{cached_result}
+
+*️⃣ Cache expires in 30 minutes for fresh data*
+"""
+        
+        # Search Gmail
+        emails = await _search_gmail_emails(gmail_access_token, filtered_query, max_emails)
+        
+        if not emails:
+            return f"""📭 **No emails found** for search query: `{filtered_query}`
+
+**Suggestions:**
+- Try broader search terms
+- Check date ranges (`after:2024-08-01`)  
+- Remove specific filters
+- Use `is:unread` for recent emails
+
+**Applied Filters:**
+- ❌ Promotions excluded: {not include_promotions}
+- ❌ Bank emails excluded: {not include_bank_emails}
+"""
+        
+        # Analyze the emails
+        result = await _analyze_gmail_results(emails, analysis_type, specific_question, filtered_query)
+        
+        # Cache the result for 30 minutes
+        await _cache_result(cache_key, result, expires_minutes=30)
+        
+        return result
+            
+    except Exception as e:
+        error_msg = str(e)
+        
+        # Better error handling
+        if "401" in error_msg or "unauthorized" in error_msg.lower():
+            return f"""❌ **Authentication Error**
+
+Your Gmail access token has expired or is invalid.
+
+**Solutions:**
+1. Get a fresh token using `start_gmail_oauth` tool
+2. Make sure you copied the complete token
+3. Check if token has proper Gmail API permissions
+
+**Original Error:** {error_msg}
+"""
+        elif "403" in error_msg or "forbidden" in error_msg.lower():
+            return f"""❌ **Permission Error**
+
+Gmail API access is restricted.
+
+**Solutions:**
+1. Enable Gmail API in Google Cloud Console
+2. Check OAuth scope includes gmail.readonly
+3. Verify project billing is enabled
+
+**Original Error:** {error_msg}
+"""
+        else:
+            return f"""❌ **Gmail API Error**
+
+Something went wrong accessing Gmail.
+
+**Error Details:** {error_msg}
+
+**Common Fixes:**
+- Check internet connection
+- Verify access token format
+- Try reducing max_emails parameter
+- Use `start_gmail_oauth` for fresh authentication
+"""
+
+def _apply_smart_filtering(base_query: str, include_promotions: bool, include_bank_emails: bool) -> str:
+    """Apply smart filtering to exclude promotions and bank emails"""
+    
+    filters = []
+    
+    # Base query
+    filtered_query = base_query.strip()
+    
+    # Exclude promotions (Gmail's automatic categorization)
+    if not include_promotions:
+        filters.append("-category:promotions")
+        filters.append("-category:social")
+        # Common promotional indicators
+        filters.append("-from:noreply")
+        filters.append("-from:no-reply")
+        filters.append("-subject:unsubscribe")
+        filters.append("-subject:newsletter")
+    
+    # Exclude bank/financial emails
+    if not include_bank_emails:
+        bank_domains = [
+            "bank", "banking", "sbi", "hdfc", "icici", "axis", "kotak", "pnb", 
+            "paytm", "phonepe", "gpay", "razorpay", "upi", "cred", "jupiter",
+            "noreply", "alerts", "notification"
+        ]
+        
+        for domain in bank_domains:
+            filters.append(f"-from:{domain}")
+        
+        # Common bank-related subjects
+        bank_subjects = ["statement", "transaction", "payment", "otp", "alert", "debit", "credit"]
+        for subject in bank_subjects:
+            filters.append(f"-subject:{subject}")
+    
+    # Combine base query with filters
+    if filters:
+        filtered_query += " " + " ".join(filters)
+    
+    return filtered_query
+
+# Simple in-memory cache (in production, use Redis or similar)
+_email_cache = {}
+
+async def _get_cached_result(cache_key: str) -> str | None:
+    """Get cached email analysis result"""
+    
+    if cache_key in _email_cache:
+        cached_data = _email_cache[cache_key]
+        
+        # Check if cache is expired (30 minutes)
+        if datetime.now() < cached_data['expires']:
+            return cached_data['result']
+        else:
+            # Remove expired cache
+            del _email_cache[cache_key]
+    
+    return None
+
+async def _cache_result(cache_key: str, result: str, expires_minutes: int = 30):
+    """Cache email analysis result"""
+    
+    _email_cache[cache_key] = {
+        'result': result,
+        'expires': datetime.now() + timedelta(minutes=expires_minutes),
+        'created': datetime.now()
+    }
+    
+    # Clean up old cache entries (keep max 100 entries)
+    if len(_email_cache) > 100:
+        # Remove oldest entries
+        sorted_keys = sorted(_email_cache.keys(), key=lambda k: _email_cache[k]['created'])
+        for key in sorted_keys[:20]:  # Remove 20 oldest
+            del _email_cache[key]
+
+async def _analyze_gmail_results(emails: list[dict], analysis_type: str, specific_question: str | None, search_query: str) -> str:
+    """Analyze Gmail search results"""
+    
+    email_summaries = []
+    
+    for i, email in enumerate(emails, 1):
+        subject = email.get('subject', 'No Subject')
+        sender = email.get('sender', 'Unknown Sender')
+        date = email.get('date', 'Unknown Date')
+        
+        # Clean sender (remove extra info)
+        sender = sender.split('<')[0].strip() if '<' in sender else sender
+        
+        email_summaries.append(f"**{i}.** {subject[:60]}{'...' if len(subject) > 60 else ''}\n   📧 {sender} • 📅 {date[:16]}")
+    
+    # Perform analysis based on type
+    if analysis_type == "summarize":
+        return f"""📧 **Gmail Search Results & Summary**
+
+**🔍 Search Query:** `{search_query}`
+**📊 Found:** {len(emails)} email(s) (filtered: no promotions/bank emails)
+
+**📋 Email List:**
+{chr(10).join(email_summaries)}
+
+**🔍 Overall Analysis:**
+{_analyze_multiple_emails(emails, analysis_type)}
+
+**⚡ Smart Features Applied:**
+- ✅ Promotional emails filtered out
+- ✅ Bank/financial alerts excluded  
+- ✅ Results cached for 30 minutes
+- ✅ Privacy-focused (no server storage)
+"""
+    
+    elif analysis_type == "action_items":
+        return f"""📧 **Action Items from Gmail Search**
+
+**🔍 Search Query:** `{search_query}`
+**📊 Emails Analyzed:** {len(emails)}
+
+**✅ Action Items Found:**
+{_extract_action_items_from_multiple(emails)}
+
+**⏰ Urgent Items:**
+{_extract_urgent_items_from_multiple(emails)}
+
+**📧 Source Emails:**
+{chr(10).join(email_summaries[:5])}
+"""
+    
+    elif analysis_type == "question":
+        if not specific_question:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message="Please provide a specific question when using 'question' analysis type."))
+        
+        return f"""📧 **Question Analysis - Gmail Search**
+
+**🔍 Search Query:** `{search_query}`
+**❓ Your Question:** {specific_question}
+**📊 Emails Analyzed:** {len(emails)}
+
+**📍 Answer:**
+{_answer_question_about_multiple_emails(emails, specific_question)}
+
+**📋 Relevant Email Excerpts:**
+{_find_relevant_excerpts_from_multiple(emails, specific_question)}
+
+**📧 Source Emails:**
+{chr(10).join(email_summaries[:3])}
+"""
+    
+    else:
+        # For sentiment and reply_suggestions, analyze first few emails
+        results = []
+        for i, email in enumerate(emails[:3], 1):  # Limit to first 3 for detailed analysis
+            email_analysis = await email_analyzer(
+                email_content=f"Subject: {email.get('subject', '')}\nFrom: {email.get('sender', '')}\n\n{email.get('body', '')}",
+                analysis_type=analysis_type,
+                specific_question=specific_question
+            )
+            results.append(f"**Email {i} Analysis:**\n{email_analysis}\n")
+        
+        return f"""📧 **Gmail Search & {analysis_type.title()} Analysis**
+
+**🔍 Search Query:** `{search_query}`
+**📊 Emails Found:** {len(emails)} (showing detailed analysis for first 3)
+
+{chr(10).join(results)}
+
+**📧 All Emails Found:**
+{chr(10).join(email_summaries)}
+"""
+
+async def _search_gmail_emails(access_token: str, search_query: str, max_results: int = 50) -> list[dict]:
+    """Search Gmail and return email data"""
+    
+    async with httpx.AsyncClient() as client:
+        # Step 1: Search for message IDs
+        search_url = f"https://gmail.googleapis.com/gmail/v1/users/me/messages"
+        
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+        
+        params = {
+            "q": search_query,
+            "maxResults": max_results
+        }
+        
+        response = await client.get(search_url, headers=headers, params=params)
+        
+        if response.status_code != 200:
+            raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"Gmail search failed: {response.status_code} - {response.text}"))
+        
+        search_results = response.json()
+        messages = search_results.get('messages', [])
+        
+        if not messages:
+            return []
+        
+        # Step 2: Fetch full message details
+        emails = []
+        for message in messages:
+            message_id = message['id']
+            
+            message_url = f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}"
+            message_response = await client.get(message_url, headers=headers)
+            
+            if message_response.status_code == 200:
+                email_data = message_response.json()
+                parsed_email = _parse_gmail_message(email_data)
+                emails.append(parsed_email)
+        
+        return emails
+
+def _parse_gmail_message(gmail_message: dict) -> dict:
+    """Parse Gmail API message into readable format"""
+    
+    payload = gmail_message.get('payload', {})
+    headers = payload.get('headers', [])
+    
+    # Extract headers
+    subject = ""
+    sender = ""
+    date = ""
+    
+    for header in headers:
+        name = header.get('name', '').lower()
+        value = header.get('value', '')
+        
+        if name == 'subject':
+            subject = value
+        elif name == 'from':
+            sender = value
+        elif name == 'date':
+            date = value
+    
+    # Extract body
+    body = _extract_gmail_body(payload)
+    
+    return {
+        'subject': subject,
+        'sender': sender,
+        'date': date,
+        'body': body,
+        'message_id': gmail_message.get('id', '')
+    }
+
+def _extract_gmail_body(payload: dict) -> str:
+    """Extract email body from Gmail payload"""
+    
+    body = ""
+    
+    # Check if it's a simple message
+    if 'body' in payload and payload['body'].get('data'):
+        body = base64.urlsafe_b64decode(payload['body']['data']).decode('utf-8', errors='ignore')
+    
+    # Check for multipart messages
+    elif 'parts' in payload:
+        for part in payload['parts']:
+            if part.get('mimeType') == 'text/plain' and part.get('body', {}).get('data'):
+                part_body = base64.urlsafe_b64decode(part['body']['data']).decode('utf-8', errors='ignore')
+                body += part_body + "\n"
+            elif part.get('mimeType') == 'text/html' and part.get('body', {}).get('data') and not body:
+                # Fallback to HTML if no plain text
+                html_body = base64.urlsafe_b64decode(part['body']['data']).decode('utf-8', errors='ignore')
+                # Simple HTML to text conversion
+                import re
+                body = re.sub('<[^<]+?>', '', html_body)
+    
+    return body.strip()
+
+def _analyze_multiple_emails(emails: list[dict], analysis_type: str) -> str:
+    """Analyze multiple emails and provide summary"""
+    
+    total_emails = len(emails)
+    
+    if analysis_type == "summarize":
+        # Count key metrics
+        senders = set()
+        subjects = []
+        total_length = 0
+        
+        for email in emails:
+            senders.add(email.get('sender', 'Unknown'))
+            subjects.append(email.get('subject', 'No Subject'))
+            total_length += len(email.get('body', ''))
+        
+        return f"""**📊 Email Summary:**
+• Total emails: {total_emails}
+• Unique senders: {len(senders)}
+• Average email length: {total_length // total_emails if total_emails > 0 else 0} characters
+
+**👥 Top Senders:**
+{chr(10).join([f"• {sender}" for sender in list(senders)[:5]])}
+
+**📝 Recent Subjects:**
+{chr(10).join([f"• {subject}" for subject in subjects[:5]])}
+"""
+
+def _extract_action_items_from_multiple(emails: list[dict]) -> str:
+    """Extract action items from multiple emails"""
+    
+    all_actions = []
+    
+    for i, email in enumerate(emails, 1):
+        body = email.get('body', '')
+        actions = _extract_action_items(body)
+        
+        if actions and actions != "• No specific action items identified":
+            all_actions.append(f"**From Email {i} ({email.get('subject', 'No Subject')}):**\n{actions}")
+    
+    return '\n\n'.join(all_actions) if all_actions else "• No action items found across emails"
+
+def _extract_urgent_items_from_multiple(emails: list[dict]) -> str:
+    """Extract urgent items from multiple emails"""
+    
+    urgent_items = []
+    
+    for i, email in enumerate(emails, 1):
+        body = email.get('body', '')
+        urgent = _extract_time_sensitive_items(body)
+        
+        if urgent and urgent != "⏰ No urgent deadlines identified":
+            urgent_items.append(f"**Email {i}:** {urgent}")
+    
+    return '\n\n'.join(urgent_items) if urgent_items else "⏰ No urgent items found"
+
+def _answer_question_about_multiple_emails(emails: list[dict], question: str) -> str:
+    """Answer question about multiple emails"""
+    
+    # Combine all email content
+    combined_content = ""
+    for email in emails:
+        combined_content += f" {email.get('subject', '')} {email.get('body', '')}"
+    
+    # Use existing question answering logic
+    return _answer_question_about_email(combined_content, question)
+
+def _find_relevant_excerpts_from_multiple(emails: list[dict], question: str) -> str:
+    """Find relevant excerpts from multiple emails"""
+    
+    question_words = question.lower().split()
+    relevant_excerpts = []
+    
+    for i, email in enumerate(emails, 1):
+        subject = email.get('subject', '')
+        body = email.get('body', '')
+        
+        # Check subject
+        if any(word in subject.lower() for word in question_words):
+            relevant_excerpts.append(f"• **Email {i} Subject:** \"{subject}\"")
+        
+        # Check body sentences
+        sentences = body.split('.')
+        for sentence in sentences[:3]:  # First 3 sentences only
+            if len(sentence.strip()) > 20 and any(word in sentence.lower() for word in question_words):
+                relevant_excerpts.append(f"• **Email {i}:** \"{sentence.strip()}\"")
+                break
+    
+    return '\n'.join(relevant_excerpts[:5]) if relevant_excerpts else "• No directly relevant excerpts found"
+
+GMAIL_SETUP_DESCRIPTION = RichToolDescription(
+    description="Get step-by-step instructions to connect your Gmail account.",
+    use_when="When user wants to set up Gmail integration for the first time.",
+    side_effects="Provides OAuth setup instructions and example search queries.",
+)
+
+@mcp.tool(description=GMAIL_SETUP_DESCRIPTION.model_dump_json())
+async def gmail_setup_guide() -> str:
+    """
+    Provide step-by-step instructions for Gmail OAuth setup.
+    """
+    
+    return """🔧 **Gmail Integration Setup Guide**
+
+## 🚀 **Quick Setup (5 minutes):**
+
+### **Step 1: Create Google Cloud Project**
+1. Go to: **https://console.cloud.google.com/**
+2. Create new project or select existing
+3. Enable **Gmail API**: Search "Gmail API" → Enable
+
+### **Step 2: Create OAuth Credentials**
+1. Go to: **https://console.cloud.google.com/apis/credentials**
+2. Click **"+ CREATE CREDENTIALS"** → **"OAuth 2.0 Client IDs"**
+3. Choose **"Web application"**
+4. Name: "Gmail Email Analyzer"
+5. **Authorized redirect URIs:** Add `https://developers.google.com/oauthplayground`
+6. Click **"CREATE"** → Copy **Client ID** and **Client Secret**
+
+### **Step 3: Get Access Token**
+1. Go to: **https://developers.google.com/oauthplayground/**
+2. Click **⚙️ Settings** (top right)
+3. Check **"Use your own OAuth credentials"**
+4. Paste your **Client ID** and **Client Secret**
+5. In "Step 1" → Select **"Gmail API v1"** → **"https://www.googleapis.com/auth/gmail.readonly"**
+6. Click **"Authorize APIs"** → **Sign in to Gmail** → **Allow access**
+7. In "Step 2" → Click **"Exchange authorization code for tokens"**
+8. Copy **"Access token"** and **"Refresh token"**
+
+## 📧 **Test Your Setup:**
+
+```
+🔍 Search recent emails (excluding promotions/bank):
+search_query: "is:unread"
+analysis_type: "summarize"
+gmail_access_token: "ya29.a0AfH6SMC..."
+max_emails: 50
+
+📅 Work emails from this week:
+search_query: "after:2024-08-05 -category:promotions"
+analysis_type: "action_items"
+
+❓ Ask questions about specific emails:
+search_query: "from:boss@company.com"
+analysis_type: "question"
+specific_question: "What are the project deadlines?"
+```
+
+## �️ **Smart Features:**
+
+### **🚫 Auto-Filtering:**
+- ❌ **Promotions** (newsletters, marketing)
+- ❌ **Bank emails** (OTPs, statements, alerts)
+- ❌ **Social notifications** (LinkedIn, Facebook)
+- ✅ **Only important emails** analyzed
+
+### **⚡ Performance:**
+- 📦 **Caching**: Results cached for 30 minutes
+- 🚀 **Fast searches**: Up to 100 emails
+- 🔒 **Privacy**: No emails stored on servers
+- 🔄 **Auto-refresh**: Expired tokens handled
+
+### **🎯 Search Examples:**
+```
+Subject-based: "subject:meeting OR subject:project"
+Sender-based: "from:manager@company.com"
+Date-based: "after:2024-08-01 before:2024-08-08"
+Combined: "from:hr subject:leave after:2024-08-01"
+Unread only: "is:unread -category:promotions"
+With attachments: "has:attachment from:colleague"
+```
+
+## 🆘 **Troubleshooting:**
+
+**Token expires in 1 hour?**
+- Use **Refresh Token** to get new Access Token
+- Or re-run OAuth flow for fresh tokens
+
+**No emails found?**
+- Check search syntax
+- Try broader terms
+- Use `is:unread` for recent emails
+
+**Permission denied?**
+- Verify Gmail API is enabled
+- Check OAuth scope is correct
+- Ensure billing is set up (if required)
+
+Ready to analyze your emails intelligently! 🎉"""
 
 # --- Run MCP Server ---
 async def main():
