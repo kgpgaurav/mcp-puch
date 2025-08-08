@@ -3,8 +3,12 @@ services:
     name: mcp-starter
     runtime: python
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: cd mcp-bearer-token && python mcp_starter.py
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+    startCommand: |
+      cd mcp-bearer-token
+      python mcp_starter.py
     envVars:
       - key: AUTH_TOKEN
         value: yaartadhoschale
