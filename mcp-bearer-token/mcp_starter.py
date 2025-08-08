@@ -205,7 +205,7 @@ async def make_img_black_and_white(
 
 # --- Run MCP Server ---
 async def main():
-    port = int(os.environ.get("PORT", 8086))
+    port = int(os.environ.get("PORT", 10000))
     print(f"🚀 Starting MCP server on http://0.0.0.0:{port}")
     await mcp.run_async("streamable-http", host="0.0.0.0", port=port)
 
