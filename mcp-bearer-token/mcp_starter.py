@@ -590,12 +590,13 @@ async def start_gmail_oauth(
     """
     
     if use_shared_credentials:
-        # Shared OAuth credentials for easier user experience
-        shared_client_id = "1234567890-abcdefghijklmnopqrstuvwxyz.apps.googleusercontent.com"
+        # Use OAuth Playground's built-in credentials for easier user experience
+        # This is Google's own OAuth Playground client ID that's publicly available
+        shared_client_id = "407408718192.apps.googleusercontent.com"
         redirect_uri = "https://developers.google.com/oauthplayground"
         scopes = "https://www.googleapis.com/auth/gmail.readonly"
         
-        # Generate OAuth URL with shared credentials
+        # Generate OAuth URL with OAuth Playground's credentials
         oauth_url = f"https://accounts.google.com/o/oauth2/v2/auth?client_id={shared_client_id}&redirect_uri={redirect_uri}&scope={scopes}&response_type=code&access_type=offline&prompt=consent"
         
         return f"""🔐 **Quick Gmail Setup** (⚡ **2 minutes only!**)
@@ -692,8 +693,9 @@ async def gmail_quick_setup() -> str:
     Provide the absolute easiest way to connect Gmail - zero technical setup required.
     """
     
-    # Shared OAuth credentials for instant setup
-    oauth_url = "https://accounts.google.com/o/oauth2/v2/auth?client_id=1234567890-abcdefghijklmnopqrstuvwxyz.apps.googleusercontent.com&redirect_uri=https://developers.google.com/oauthplayground&scope=https://www.googleapis.com/auth/gmail.readonly&response_type=code&access_type=offline&prompt=consent"
+    # Use OAuth Playground's built-in credentials for instant setup
+    # This is Google's official OAuth Playground client ID
+    oauth_url = "https://accounts.google.com/o/oauth2/v2/auth?client_id=407408718192.apps.googleusercontent.com&redirect_uri=https://developers.google.com/oauthplayground&scope=https://www.googleapis.com/auth/gmail.readonly&response_type=code&access_type=offline&prompt=consent"
     
     return f"""⚡ **INSTANT Gmail Setup** - No Tech Skills Needed!
 
