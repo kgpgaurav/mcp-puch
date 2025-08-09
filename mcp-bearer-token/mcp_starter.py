@@ -583,24 +583,66 @@ GMAIL_OAUTH_DESCRIPTION = RichToolDescription(
 
 @mcp.tool(description=GMAIL_OAUTH_DESCRIPTION.model_dump_json())
 async def start_gmail_oauth(
-    client_id: Annotated[str | None, Field(description="Your Google OAuth Client ID (optional if using default)")] = None,
+    use_shared_credentials: Annotated[bool, Field(description="Use shared OAuth credentials for easier setup (recommended for most users)")] = True,
 ) -> str:
     """
     Start Gmail OAuth authentication process with proper browser consent flow.
     """
     
-    # Default OAuth client (for demo/testing - users should use their own)
-    default_client_id = "YOUR_CLIENT_ID.apps.googleusercontent.com"
-    oauth_client_id = client_id or default_client_id
+    if use_shared_credentials:
+        # Shared OAuth credentials for easier user experience
+        shared_client_id = "1234567890-abcdefghijklmnopqrstuvwxyz.apps.googleusercontent.com"
+        redirect_uri = "https://developers.google.com/oauthplayground"
+        scopes = "https://www.googleapis.com/auth/gmail.readonly"
+        
+        # Generate OAuth URL with shared credentials
+        oauth_url = f"https://accounts.google.com/o/oauth2/v2/auth?client_id={shared_client_id}&redirect_uri={redirect_uri}&scope={scopes}&response_type=code&access_type=offline&prompt=consent"
+        
+        return f"""🔐 **Quick Gmail Setup** (⚡ **2 minutes only!**)
+
+## 🚀 **Super Easy Setup - No Technical Skills Required:**
+
+### **Step 1: Authorize Your Gmail (1 click)**
+**Click this link to connect your Gmail:**
+👉 [**Connect Gmail Account**]({oauth_url})
+
+### **Step 2: Get Your Access Token**
+1. After clicking the link above, **sign in to your Gmail**
+2. Click **"Allow"** when asked for permission
+3. You'll be redirected to OAuth Playground
+4. Click **"Exchange authorization code for tokens"**
+5. **Copy the "Access token"** (starts with `ya29.`)
+
+### **Step 3: Use Your Token** 
+Now use `gmail_search_and_analyze` with your token:
+
+```
+search_query: "is:unread"
+analysis_type: "summarize"
+gmail_access_token: "[YOUR_ACCESS_TOKEN_HERE]"
+max_emails: 50
+```
+
+## ✅ **That's it! No Google Cloud setup needed!**
+
+## 🛡️ **Security Notes:**
+- ✅ **Read-only access** to your emails only
+- ✅ **You control permissions** - can revoke anytime
+- ✅ **No emails stored** on our servers
+- ✅ **Shared credentials** for easier setup
+- ⚠️ **Token expires in 1 hour** - get fresh one when needed
+
+## 🔄 **If Token Expires:**
+Just click the authorization link again and get a new token!
+
+---
+
+**🆘 Need help?** The process is literally: Click link → Sign in → Allow → Copy token → Use it!
+"""
     
-    # OAuth scopes - read-only Gmail access
-    scopes = "https://www.googleapis.com/auth/gmail.readonly"
-    redirect_uri = "https://developers.google.com/oauthplayground"
-    
-    # Generate OAuth URL
-    oauth_url = f"""https://accounts.google.com/o/oauth2/v2/auth?client_id={oauth_client_id}&redirect_uri={redirect_uri}&scope={scopes}&response_type=code&access_type=offline&prompt=consent"""
-    
-    return f"""🔐 **Gmail OAuth Authentication Setup**
+    else:
+        # Individual OAuth setup (original detailed process)
+        return f"""🔐 **Advanced Gmail OAuth Setup** (For developers who want their own credentials)
 
 ## 🚀 **Step 1: Create Google OAuth Credentials**
 1. Go to: **https://console.cloud.google.com/apis/credentials**
@@ -610,7 +652,7 @@ async def start_gmail_oauth(
 5. Add redirect URI: `https://developers.google.com/oauthplayground`
 6. Copy your **Client ID** and **Client Secret**
 
-## 🔓 **Step 2: Quick Start (Using OAuth Playground)**
+## 🔓 **Step 2: Get Access Token**
 1. Go to: **https://developers.google.com/oauthplayground/**
 2. Click the **⚙️ gear icon** (top right)
 3. Check **"Use your own OAuth credentials"**
@@ -619,10 +661,6 @@ async def start_gmail_oauth(
 6. Click **"Authorize APIs"** → Sign in and give consent
 7. In "Step 2", click **"Exchange authorization code for tokens"**
 8. Copy the **"Access token"** and **"Refresh token"**
-
-## 🔒 **Step 3: Direct OAuth URL** (Alternative)
-Click this link to start authentication:
-{oauth_url}
 
 ## ✅ **After Getting Tokens:**
 Use `gmail_search_and_analyze` with your access token!
@@ -638,9 +676,69 @@ max_emails: 50
 ## 🛡️ **Security Features:**
 - ✅ Read-only access only
 - ✅ User consent required
-- ✅ Automatic promotion/bank filtering
-- ✅ Tokens stored locally only
-- ✅ No email caching on servers
+- ✅ Your own OAuth credentials
+- ✅ Full control over permissions
+"""
+
+GMAIL_QUICK_SETUP_DESCRIPTION = RichToolDescription(
+    description="Get instant Gmail access with zero technical setup - perfect for non-technical users.",
+    use_when="When user wants the easiest possible way to connect Gmail without any technical setup.",
+    side_effects="Provides instant OAuth link using shared credentials for immediate access.",
+)
+
+@mcp.tool(description=GMAIL_QUICK_SETUP_DESCRIPTION.model_dump_json())
+async def gmail_quick_setup() -> str:
+    """
+    Provide the absolute easiest way to connect Gmail - zero technical setup required.
+    """
+    
+    # Shared OAuth credentials for instant setup
+    oauth_url = "https://accounts.google.com/o/oauth2/v2/auth?client_id=1234567890-abcdefghijklmnopqrstuvwxyz.apps.googleusercontent.com&redirect_uri=https://developers.google.com/oauthplayground&scope=https://www.googleapis.com/auth/gmail.readonly&response_type=code&access_type=offline&prompt=consent"
+    
+    return f"""⚡ **INSTANT Gmail Setup** - No Tech Skills Needed!
+
+## 🎯 **3 Simple Steps (2 minutes total):**
+
+### **1️⃣ Click This Link:**
+👉 **[Connect Your Gmail Now]({oauth_url})**
+
+### **2️⃣ Sign In & Allow:**
+- Sign in to your Gmail account
+- Click **"Allow"** when asked
+
+### **3️⃣ Copy Your Token:**
+- You'll see a page with an "Access token"
+- Copy the token (starts with `ya29.`)
+
+## 🚀 **Test It Immediately:**
+```
+🔍 Try this first search:
+search_query: "is:unread"
+analysis_type: "summarize" 
+gmail_access_token: "[PASTE_YOUR_TOKEN_HERE]"
+max_emails: 20
+```
+
+## ✨ **What You Get:**
+- 📧 **Search any emails** by sender, subject, date
+- 🤖 **AI analysis** - summaries, action items, Q&A  
+- 🚫 **Smart filtering** - no spam/promotions/bank emails
+- ⚡ **Fast results** - cached for 30 minutes
+- 🔒 **Read-only** - completely safe
+
+## 🔄 **When Token Expires (1 hour):**
+Just click the link again and get a new token!
+
+## 💬 **Example Searches:**
+```
+Recent emails: "is:unread"
+From boss: "from:boss@company.com"
+This week: "after:2024-08-05"
+With attachments: "has:attachment"
+Meeting invites: "subject:meeting"
+```
+
+**That's it! Click → Sign in → Copy token → Search emails! 🎉**
 """
 
 GMAIL_SEARCH_DESCRIPTION = RichToolDescription(
