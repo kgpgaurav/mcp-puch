@@ -590,38 +590,37 @@ async def start_gmail_oauth(
     """
     
     if use_shared_credentials:
-        # Use OAuth Playground's built-in credentials for easier user experience
-        # This is Google's own OAuth Playground client ID that's publicly available
-        shared_client_id = "407408718192.apps.googleusercontent.com"
-        redirect_uri = "https://developers.google.com/oauthplayground"
-        scopes = "https://www.googleapis.com/auth/gmail.readonly"
+        # Direct users to OAuth Playground for the easiest setup
+        playground_url = "https://developers.google.com/oauthplayground"
         
-        # Generate OAuth URL with OAuth Playground's credentials
-        oauth_url = f"https://accounts.google.com/o/oauth2/v2/auth?client_id={shared_client_id}&redirect_uri={redirect_uri}&scope={scopes}&response_type=code&access_type=offline&prompt=consent"
-        
-        return f"""🔐 **Quick Gmail Setup** (⚡ **2 minutes only!**)
+        return f"""🔐 **Super Easy Gmail Setup** (⚡ **2 minutes only!**)
 
-## 🚀 **Super Easy Setup - No Technical Skills Required:**
+## 🚀 **Zero Technical Skills Required - Just Follow These Steps:**
 
-### **Step 1: Authorize Your Gmail (1 click)**
-**Click this link to connect your Gmail:**
-👉 [**Connect Gmail Account**]({oauth_url})
+### **🎯 Step 1: Go to OAuth Playground**
+👉 **[Click Here: Google OAuth Playground]({playground_url})**
 
-### **Step 2: Get Your Access Token**
-1. After clicking the link above, **sign in to your Gmail**
-2. Click **"Allow"** when asked for permission
-3. You'll be redirected to OAuth Playground
-4. Click **"Exchange authorization code for tokens"**
-5. **Copy the "Access token"** (starts with `ya29.`)
+### **🎯 Step 2: Select Gmail API**
+1. In the left panel, scroll down to **"Gmail API v1"**
+2. Click the **arrow** to expand it
+3. Check the box: **"https://www.googleapis.com/auth/gmail.readonly"**
+4. Click **"Authorize APIs"** (blue button)
 
-### **Step 3: Use Your Token** 
-Now use `gmail_search_and_analyze` with your token:
+### **🎯 Step 3: Sign In & Allow**
+1. **Sign in to your Gmail account**
+2. Click **"Allow"** when Google asks for permission
+3. You'll be redirected back to OAuth Playground
 
+### **🎯 Step 4: Get Your Token**
+1. Click **"Exchange authorization code for tokens"** (blue button)
+2. **Copy the "Access token"** (starts with `ya29.`)
+
+### **🎯 Step 5: Test It!**
 ```
 search_query: "is:unread"
 analysis_type: "summarize"
-gmail_access_token: "[YOUR_ACCESS_TOKEN_HERE]"
-max_emails: 50
+gmail_access_token: "[PASTE_YOUR_TOKEN_HERE]"
+max_emails: 20
 ```
 
 ## ✅ **That's it! No Google Cloud setup needed!**
@@ -630,15 +629,15 @@ max_emails: 50
 - ✅ **Read-only access** to your emails only
 - ✅ **You control permissions** - can revoke anytime
 - ✅ **No emails stored** on our servers
-- ✅ **Shared credentials** for easier setup
+- ✅ **Uses Google's official OAuth Playground**
 - ⚠️ **Token expires in 1 hour** - get fresh one when needed
 
-## 🔄 **If Token Expires:**
-Just click the authorization link again and get a new token!
+## 🔄 **When Token Expires:**
+Just repeat the process - it takes 30 seconds once you know the steps!
 
 ---
 
-**🆘 Need help?** The process is literally: Click link → Sign in → Allow → Copy token → Use it!
+**🆘 Need help?** The process: OAuth Playground → Gmail API → Authorize → Allow → Get Token → Use it! 🎉
 """
     
     else:
@@ -693,28 +692,30 @@ async def gmail_quick_setup() -> str:
     Provide the absolute easiest way to connect Gmail - zero technical setup required.
     """
     
-    # Use OAuth Playground's built-in credentials for instant setup
-    # This is Google's official OAuth Playground client ID
-    oauth_url = "https://accounts.google.com/o/oauth2/v2/auth?client_id=407408718192.apps.googleusercontent.com&redirect_uri=https://developers.google.com/oauthplayground&scope=https://www.googleapis.com/auth/gmail.readonly&response_type=code&access_type=offline&prompt=consent"
+    # Direct users to OAuth Playground for instant setup
+    playground_url = "https://developers.google.com/oauthplayground"
     
-    return f"""⚡ **INSTANT Gmail Setup** - No Tech Skills Needed!
+    return f"""⚡ **INSTANT Gmail Setup** - Zero Tech Skills!
 
-## 🎯 **3 Simple Steps (2 minutes total):**
+## 🎯 **4 Simple Clicks (2 minutes total):**
 
-### **1️⃣ Click This Link:**
-👉 **[Connect Your Gmail Now]({oauth_url})**
+### **1️⃣ Go to OAuth Playground:**
+👉 **[Open Google OAuth Playground]({playground_url})**
 
-### **2️⃣ Sign In & Allow:**
-- Sign in to your Gmail account
-- Click **"Allow"** when asked
+### **2️⃣ Select Gmail API:**
+- Scroll to **"Gmail API v1"** in left panel
+- Click to expand → Check **"gmail.readonly"**
+- Click **"Authorize APIs"**
 
-### **3️⃣ Copy Your Token:**
-- You'll see a page with an "Access token"
-- Copy the token (starts with `ya29.`)
+### **3️⃣ Sign In & Allow:**
+- Sign in to Gmail → Click **"Allow"**
+
+### **4️⃣ Get Your Token:**
+- Click **"Exchange authorization code for tokens"**
+- Copy the **"Access token"** (starts with `ya29.`)
 
 ## 🚀 **Test It Immediately:**
 ```
-🔍 Try this first search:
 search_query: "is:unread"
 analysis_type: "summarize" 
 gmail_access_token: "[PASTE_YOUR_TOKEN_HERE]"
@@ -729,7 +730,7 @@ max_emails: 20
 - 🔒 **Read-only** - completely safe
 
 ## 🔄 **When Token Expires (1 hour):**
-Just click the link again and get a new token!
+Just repeat the process - takes 30 seconds!
 
 ## 💬 **Example Searches:**
 ```
@@ -740,7 +741,103 @@ With attachments: "has:attachment"
 Meeting invites: "subject:meeting"
 ```
 
-**That's it! Click → Sign in → Copy token → Search emails! 🎉**
+**Super Easy: OAuth Playground → Gmail API → Authorize → Token! 🎉**
+"""
+
+GMAIL_SETUP_GUIDE_DESCRIPTION = RichToolDescription(
+    description="Comprehensive visual guide for Gmail OAuth setup with step-by-step screenshots and troubleshooting.",
+    use_when="When user needs detailed help with Gmail authentication or encounters issues during setup.",
+    side_effects="Provides detailed visual guide with common troubleshooting solutions.",
+)
+
+@mcp.tool(description=GMAIL_SETUP_GUIDE_DESCRIPTION.model_dump_json())
+async def gmail_setup_guide() -> str:
+    """
+    Comprehensive step-by-step guide for Gmail OAuth setup with troubleshooting.
+    """
+    
+    return """📖 **Complete Gmail Setup Guide** - Visual Walkthrough
+
+## 🎯 **Method 1: Super Easy (Recommended)**
+
+### **📍 Step 1: Open OAuth Playground**
+👉 **Go to: https://developers.google.com/oauthplayground**
+
+### **📍 Step 2: Find Gmail API**
+- Look for **"Gmail API v1"** in the left sidebar
+- Click the **small arrow** to expand the section
+- You'll see: `https://www.googleapis.com/auth/gmail.readonly`
+
+### **📍 Step 3: Select Permission**
+- ✅ **Check the box** next to `gmail.readonly`
+- Click the blue **"Authorize APIs"** button
+
+### **📍 Step 4: Google Sign-In**
+- **Sign in** to your Gmail account
+- **Click "Allow"** when Google asks for permission
+- You'll return to OAuth Playground
+
+### **📍 Step 5: Get Your Token**
+- Click **"Exchange authorization code for tokens"**
+- **Copy the "Access token"** (long string starting with `ya29.`)
+
+## 🚨 **Common Issues & Solutions:**
+
+### **❌ "Access blocked" Error**
+- **Solution**: Make sure you're using OAuth Playground directly, not a custom link
+- **URL should be**: `developers.google.com/oauthplayground`
+
+### **❌ "invalid_client" Error**  
+- **Solution**: Use the OAuth Playground method above instead of direct URLs
+
+### **❌ "Token expired" Error**
+- **Solution**: Tokens last 1 hour. Just repeat Step 5 to get a fresh token
+
+### **❌ "Scope not found" Error**
+- **Solution**: Make sure you selected exactly: `https://www.googleapis.com/auth/gmail.readonly`
+
+## 🎯 **Method 2: Advanced (For Developers)**
+
+### **🔧 Create Your Own OAuth App**
+1. **Google Cloud Console**: https://console.cloud.google.com/apis/credentials
+2. **Create Project** → **OAuth 2.0 Client ID** → **Web Application**
+3. **Add Redirect URI**: `https://developers.google.com/oauthplayground`
+4. **Copy Client ID & Secret**
+
+### **🔧 Use Your Credentials**
+1. **OAuth Playground**: https://developers.google.com/oauthplayground
+2. **Settings (⚙️)** → **Use your own OAuth credentials**
+3. **Enter your Client ID & Secret**
+4. **Continue with normal flow**
+
+## ✅ **Test Your Setup**
+
+After getting your token, test with:
+```
+Tool: gmail_search_and_analyze
+search_query: "is:unread"
+analysis_type: "summarize"
+gmail_access_token: "[YOUR_TOKEN_HERE]"
+max_emails: 10
+```
+
+## 🛡️ **Security & Privacy**
+
+- ✅ **Read-only access** - we can't send/delete emails
+- ✅ **No data stored** - emails processed in real-time
+- ✅ **Revoke anytime** - Google Account → Security → Third-party apps
+- ✅ **Token expires** - automatic security after 1 hour
+
+## 💡 **Pro Tips**
+
+1. **Bookmark OAuth Playground** for quick token refresh
+2. **Save your Client ID** if using advanced method
+3. **Test with simple queries** first (`is:unread`)
+4. **Use smart filtering** to avoid spam/promotions
+
+---
+
+**🆘 Still need help?** Most users succeed with Method 1 on their first try! The key is using Google's OAuth Playground directly, not custom URLs.
 """
 
 GMAIL_SEARCH_DESCRIPTION = RichToolDescription(
