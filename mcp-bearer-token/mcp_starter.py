@@ -14,6 +14,8 @@ import httpx
 import readabilipy
 import base64
 import json
+import re
+import hashlib
 from datetime import datetime, timedelta
 
 # --- Load environment variables ---
@@ -249,7 +251,10 @@ async def email_analyzer(
     body = '\n'.join(body_lines).strip()
     
     # Remove excessive whitespace and clean up
-    body = ' '.join(body.split())
+    if body:
+        body = ' '.join(body.split())
+    else:
+        body = "[No email body content found]"
     
     if analysis_type == "summarize":
         return f"""📧 **Email Summary**
@@ -400,7 +405,6 @@ def _extract_time_sensitive_items(body: str) -> str:
 def _extract_people_to_contact(body: str) -> str:
     """Extract people mentioned for follow-up"""
     # Simple email extraction
-    import re
     emails = re.findall(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', body)
     
     people = []
@@ -527,7 +531,6 @@ def _answer_question_about_email(body: str, question: str) -> str:
     # Simple keyword matching approach
     if 'who' in question_lower:
         # Look for names/emails
-        import re
         emails = re.findall(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', body)
         names = re.findall(r'\b[A-Z][a-z]+\s+[A-Z][a-z]+\b', body)
         
@@ -536,7 +539,6 @@ def _answer_question_about_email(body: str, question: str) -> str:
     
     elif 'when' in question_lower:
         # Look for dates/times
-        import re
         dates = re.findall(r'\b\d{1,2}/\d{1,2}/\d{2,4}\b|\b\d{1,2}-\d{1,2}-\d{2,4}\b', body)
         times = re.findall(r'\b\d{1,2}:\d{2}\b', body)
         
@@ -888,8 +890,9 @@ max_emails: 50
         # Apply smart filtering to search query
         filtered_query = _apply_smart_filtering(search_query, include_promotions, include_bank_emails)
         
-        # Check cache first
-        cache_key = f"{filtered_query}_{max_emails}_{analysis_type}"
+        # Check cache first (use hash of query + analysis_type for security)
+        query_hash = hashlib.sha256(f"{filtered_query}_{max_emails}_{analysis_type}".encode()).hexdigest()[:16]
+        cache_key = f"gmail_search_{query_hash}"
         cached_result = await _get_cached_result(cache_key)
         
         if cached_result:
@@ -1028,18 +1031,22 @@ async def _get_cached_result(cache_key: str) -> str | None:
 async def _cache_result(cache_key: str, result: str, expires_minutes: int = 30):
     """Cache email analysis result"""
     
-    _email_cache[cache_key] = {
-        'result': result,
-        'expires': datetime.now() + timedelta(minutes=expires_minutes),
-        'created': datetime.now()
-    }
-    
-    # Clean up old cache entries (keep max 100 entries)
-    if len(_email_cache) > 100:
-        # Remove oldest entries
-        sorted_keys = sorted(_email_cache.keys(), key=lambda k: _email_cache[k]['created'])
-        for key in sorted_keys[:20]:  # Remove 20 oldest
-            del _email_cache[key]
+    try:
+        _email_cache[cache_key] = {
+            'result': result,
+            'expires': datetime.now() + timedelta(minutes=expires_minutes),
+            'created': datetime.now()
+        }
+        
+        # Clean up old cache entries (keep max 100 entries)
+        if len(_email_cache) > 100:
+            # Remove oldest entries
+            sorted_keys = sorted(_email_cache.keys(), key=lambda k: _email_cache[k]['created'])
+            for key in sorted_keys[:20]:  # Remove 20 oldest
+                del _email_cache[key]
+    except Exception:
+        # If caching fails, continue without caching
+        pass
 
 async def _analyze_gmail_results(emails: list[dict], analysis_type: str, specific_question: str | None, search_query: str) -> str:
     """Analyze Gmail search results"""
@@ -1151,9 +1158,16 @@ async def _search_gmail_emails(access_token: str, search_query: str, max_results
             "maxResults": max_results
         }
         
-        response = await client.get(search_url, headers=headers, params=params)
+        try:
+            response = await client.get(search_url, headers=headers, params=params, timeout=30)
+        except httpx.TimeoutException:
+            raise McpError(ErrorData(code=INTERNAL_ERROR, message="Gmail API request timed out. Please try again."))
+        except httpx.RequestError as e:
+            raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"Gmail API connection error: {str(e)}"))
         
-        if response.status_code != 200:
+        if response.status_code == 429:
+            raise McpError(ErrorData(code=INTERNAL_ERROR, message="Gmail API rate limit exceeded. Please wait a moment and try again."))
+        elif response.status_code != 200:
             raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"Gmail search failed: {response.status_code} - {response.text}"))
         
         search_results = response.json()
@@ -1162,18 +1176,32 @@ async def _search_gmail_emails(access_token: str, search_query: str, max_results
         if not messages:
             return []
         
-        # Step 2: Fetch full message details
+        # Step 2: Fetch full message details (with rate limiting consideration)
         emails = []
-        for message in messages:
+        for i, message in enumerate(messages):
             message_id = message['id']
             
             message_url = f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}"
-            message_response = await client.get(message_url, headers=headers)
             
-            if message_response.status_code == 200:
-                email_data = message_response.json()
-                parsed_email = _parse_gmail_message(email_data)
-                emails.append(parsed_email)
+            try:
+                message_response = await client.get(message_url, headers=headers, timeout=15)
+                
+                if message_response.status_code == 200:
+                    email_data = message_response.json()
+                    parsed_email = _parse_gmail_message(email_data)
+                    emails.append(parsed_email)
+                elif message_response.status_code == 429:
+                    # If we hit rate limits on individual messages, return what we have
+                    break
+                # For other errors, skip the message and continue
+                
+            except Exception:
+                # Skip failed messages and continue
+                continue
+            
+            # Add a small delay every 10 requests to be respectful to API
+            if i > 0 and i % 10 == 0:
+                await asyncio.sleep(0.1)
         
         return emails
 
@@ -1215,22 +1243,33 @@ def _extract_gmail_body(payload: dict) -> str:
     
     body = ""
     
-    # Check if it's a simple message
-    if 'body' in payload and payload['body'].get('data'):
-        body = base64.urlsafe_b64decode(payload['body']['data']).decode('utf-8', errors='ignore')
-    
-    # Check for multipart messages
-    elif 'parts' in payload:
-        for part in payload['parts']:
-            if part.get('mimeType') == 'text/plain' and part.get('body', {}).get('data'):
-                part_body = base64.urlsafe_b64decode(part['body']['data']).decode('utf-8', errors='ignore')
-                body += part_body + "\n"
-            elif part.get('mimeType') == 'text/html' and part.get('body', {}).get('data') and not body:
-                # Fallback to HTML if no plain text
-                html_body = base64.urlsafe_b64decode(part['body']['data']).decode('utf-8', errors='ignore')
-                # Simple HTML to text conversion
-                import re
-                body = re.sub('<[^<]+?>', '', html_body)
+    try:
+        # Check if it's a simple message
+        if 'body' in payload and payload['body'].get('data'):
+            body = base64.urlsafe_b64decode(payload['body']['data']).decode('utf-8', errors='ignore')
+        
+        # Check for multipart messages
+        elif 'parts' in payload:
+            for part in payload['parts']:
+                if part.get('mimeType') == 'text/plain' and part.get('body', {}).get('data'):
+                    try:
+                        part_body = base64.urlsafe_b64decode(part['body']['data']).decode('utf-8', errors='ignore')
+                        body += part_body + "\n"
+                    except Exception:
+                        # Skip malformed parts
+                        continue
+                elif part.get('mimeType') == 'text/html' and part.get('body', {}).get('data') and not body:
+                    # Fallback to HTML if no plain text
+                    try:
+                        html_body = base64.urlsafe_b64decode(part['body']['data']).decode('utf-8', errors='ignore')
+                        # Simple HTML to text conversion
+                        body = re.sub('<[^<]+?>', '', html_body)
+                    except Exception:
+                        # Skip malformed HTML parts
+                        continue
+    except Exception:
+        # If all else fails, return empty body rather than crash
+        body = "[Error: Could not decode email body]"
     
     return body.strip()
 
@@ -1323,106 +1362,6 @@ def _find_relevant_excerpts_from_multiple(emails: list[dict], question: str) -> 
                 break
     
     return '\n'.join(relevant_excerpts[:5]) if relevant_excerpts else "• No directly relevant excerpts found"
-
-GMAIL_SETUP_DESCRIPTION = RichToolDescription(
-    description="Get step-by-step instructions to connect your Gmail account.",
-    use_when="When user wants to set up Gmail integration for the first time.",
-    side_effects="Provides OAuth setup instructions and example search queries.",
-)
-
-@mcp.tool(description=GMAIL_SETUP_DESCRIPTION.model_dump_json())
-async def gmail_setup_guide() -> str:
-    """
-    Provide step-by-step instructions for Gmail OAuth setup.
-    """
-    
-    return """🔧 **Gmail Integration Setup Guide**
-
-## 🚀 **Quick Setup (5 minutes):**
-
-### **Step 1: Create Google Cloud Project**
-1. Go to: **https://console.cloud.google.com/**
-2. Create new project or select existing
-3. Enable **Gmail API**: Search "Gmail API" → Enable
-
-### **Step 2: Create OAuth Credentials**
-1. Go to: **https://console.cloud.google.com/apis/credentials**
-2. Click **"+ CREATE CREDENTIALS"** → **"OAuth 2.0 Client IDs"**
-3. Choose **"Web application"**
-4. Name: "Gmail Email Analyzer"
-5. **Authorized redirect URIs:** Add `https://developers.google.com/oauthplayground`
-6. Click **"CREATE"** → Copy **Client ID** and **Client Secret**
-
-### **Step 3: Get Access Token**
-1. Go to: **https://developers.google.com/oauthplayground/**
-2. Click **⚙️ Settings** (top right)
-3. Check **"Use your own OAuth credentials"**
-4. Paste your **Client ID** and **Client Secret**
-5. In "Step 1" → Select **"Gmail API v1"** → **"https://www.googleapis.com/auth/gmail.readonly"**
-6. Click **"Authorize APIs"** → **Sign in to Gmail** → **Allow access**
-7. In "Step 2" → Click **"Exchange authorization code for tokens"**
-8. Copy **"Access token"** and **"Refresh token"**
-
-## 📧 **Test Your Setup:**
-
-```
-🔍 Search recent emails (excluding promotions/bank):
-search_query: "is:unread"
-analysis_type: "summarize"
-gmail_access_token: "ya29.a0AfH6SMC..."
-max_emails: 50
-
-📅 Work emails from this week:
-search_query: "after:2024-08-05 -category:promotions"
-analysis_type: "action_items"
-
-❓ Ask questions about specific emails:
-search_query: "from:boss@company.com"
-analysis_type: "question"
-specific_question: "What are the project deadlines?"
-```
-
-## �️ **Smart Features:**
-
-### **🚫 Auto-Filtering:**
-- ❌ **Promotions** (newsletters, marketing)
-- ❌ **Bank emails** (OTPs, statements, alerts)
-- ❌ **Social notifications** (LinkedIn, Facebook)
-- ✅ **Only important emails** analyzed
-
-### **⚡ Performance:**
-- 📦 **Caching**: Results cached for 30 minutes
-- 🚀 **Fast searches**: Up to 100 emails
-- 🔒 **Privacy**: No emails stored on servers
-- 🔄 **Auto-refresh**: Expired tokens handled
-
-### **🎯 Search Examples:**
-```
-Subject-based: "subject:meeting OR subject:project"
-Sender-based: "from:manager@company.com"
-Date-based: "after:2024-08-01 before:2024-08-08"
-Combined: "from:hr subject:leave after:2024-08-01"
-Unread only: "is:unread -category:promotions"
-With attachments: "has:attachment from:colleague"
-```
-
-## 🆘 **Troubleshooting:**
-
-**Token expires in 1 hour?**
-- Use **Refresh Token** to get new Access Token
-- Or re-run OAuth flow for fresh tokens
-
-**No emails found?**
-- Check search syntax
-- Try broader terms
-- Use `is:unread` for recent emails
-
-**Permission denied?**
-- Verify Gmail API is enabled
-- Check OAuth scope is correct
-- Ensure billing is set up (if required)
-
-Ready to analyze your emails intelligently! 🎉"""
 
 # --- Run MCP Server ---
 async def main():
